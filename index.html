@@ -255,11 +255,13 @@ class ParticleSystem {
         this.loader = loader;
         this.weather = 'clear';
         this.season = 'spring';
+        this.leafScaleDivider = 2.2; // 默认除数
     }
 
     resize(w, h) { this.w = w; this.h = h; }
     setWeather(t) { this.weather = t; }
     setSeason(s) { this.season = s; }
+    setLeafScaleDivider(d) { this.leafScaleDivider = d; }
 
     update() {
         if (this.weather === 'rain' || this.weather === 'snow') {
@@ -309,9 +311,13 @@ class ParticleSystem {
                     ctx.translate(p.x, p.y);
                     ctx.rotate(p.rotation * Math.PI / 180);
                     
-                    // 调整尺寸：折中方案，除以 2.2
-                    const w = img.naturalWidth / 2.2;
-                    const h = img.naturalHeight / 2.2;
+                    // 动态调整尺寸：手机端(Canvas宽较小)需要画得更小，电脑端画得更大
+                    // 手机: w < 400 -> / 3.5
+                    // 电脑: w >= 400 -> / 2.0
+                    const scaleFactor = this.w < 400 ? 3.5 : 2.0;
+                    
+                    const w = img.naturalWidth / scaleFactor;
+                    const h = img.naturalHeight / scaleFactor;
                     ctx.drawImage(img, -w/2, -h/2, w, h); 
                     
                     ctx.restore();
