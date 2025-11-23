@@ -309,10 +309,9 @@ class ParticleSystem {
                     ctx.translate(p.x, p.y);
                     ctx.rotate(p.rotation * Math.PI / 180);
                     
-                    // 调整尺寸：从 /3 改为 /1.5
-                    // 抵消分辨率提升带来的视觉缩小，恢复到原来的视觉大小
-                    const w = img.naturalWidth / 1.5;
-                    const h = img.naturalHeight / 1.5;
+                    // 调整尺寸：折中方案，除以 2.2
+                    const w = img.naturalWidth / 2.2;
+                    const h = img.naturalHeight / 2.2;
                     ctx.drawImage(img, -w/2, -h/2, w, h); 
                     
                     ctx.restore();
