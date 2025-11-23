@@ -1,0 +1,1065 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>井底之蛙 - 像素时钟</title>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background-color: #111; overflow: hidden; font-family: 'Press Start 2P', cursive; color: white; user-select: none; }
+        #game-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; align-items: center; padding: 20px 0; box-sizing: border-box; text-shadow: 2px 2px 0px #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000; }
+        .top-bar { text-align: center; line-height: 1.8; }
+        #date-text { font-size: 12px; color: #ffd700; }
+        #weekday-text { font-size: 10px; color: #ccc; margin-top: 5px;}
+        .center-clock { flex-grow: 1; display: flex; align-items: center; justify-content: center; }
+        #time-text { font-size: 24px; letter-spacing: 2px; opacity: 0.9; }
+        .bottom-bar { text-align: center; margin-bottom: 20px; }
+        #temp-text { font-size: 16px; margin-bottom: 8px; color: #fff; }
+        #weather-desc { font-size: 10px; color: #87CEEB; }
+        @media (max-width: 600px) { #time-text { font-size: 20px; } #date-text { font-size: 10px; } }
+
+        /* 音频控制 */
+        #audio-control {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            z-index: 20;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            opacity: 0.5;
+            transition: opacity 0.3s;
+        }
+        #audio-control:hover { opacity: 1; }
+        #volume-icon {
+            font-size: 20px;
+            cursor: pointer;
+        }
+        #volume-slider {
+            width: 80px;
+            height: 4px;
+            -webkit-appearance: none;
+            background: rgba(255,255,255,0.3);
+            border-radius: 2px;
+            outline: none;
+            cursor: pointer;
+        }
+        #volume-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #fff;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="pixelCanvas"></canvas>
+</div>
+
+<div id="ui-layer">
+    <div class="top-bar">
+        <div id="date-text">LOADING...</div>
+        <div id="weekday-text">...</div>
+    </div>
+    <div class="center-clock">
+        <div id="time-text">00:00:00</div>
+    </div>
+    <div class="bottom-bar">
+        <div id="temp-text">--°C</div>
+        <div id="weather-desc">LOCATING FROG...</div>
+    </div>
+</div>
+
+    <div id="audio-control">
+        <div id="volume-icon">🔇</div>
+        <input type="range" id="volume-slider" min="0" max="1" step="0.01" value="0">
+    </div>
+
+    <!-- 音频询问弹窗 -->
+    <div id="audio-modal">
+        <div class="modal-box">
+            <p>ALLOW AUDIO?</p>
+            <div class="modal-btns">
+                <button id="btn-yes">YES</button>
+                <button id="btn-no">NO</button>
+            </div>
+    </div>
+</div>
+
+<script>
+/**
+ * ==========================================
+ * 资源清单配置 (Resource Manifest)
+ * ==========================================
+ */
+// 辅助函数：生成连续数字的文件名数组
+const sequence = (prefix, start, end, ext) => {
+    const arr = [];
+    for (let i = start; i <= end; i++) arr.push(`${prefix}${i}.${ext}`);
+    return arr;
+};
+
+const MANIFEST = {
+    core: {
+        well: 'assets/core/well.png',
+        branch: 'assets/core/branch-base.png'
+    },
+    nature: {
+        spring: 'assets/images/nature/foliage-spring.png',
+        summer: 'assets/images/nature/foliage-summer.png',
+        autumn: 'assets/images/nature/foliage-autumn.png',
+        winter: 'assets/images/nature/foliage-winter.png',
+        leaf_fall: 'assets/images/nature/foliage-fall.png'
+    },
+    sky: {
+        // 太阳素材
+        sun: {
+            sunrise: 'assets/images/sky/sun/sunrise.png',
+            noon: 'assets/images/sky/sun/noon.png',
+            sunset: 'assets/images/sky/sun/sunset.png'
+        },
+        // 自动生成 cloud-sunny-1.png 到 cloud-sunny-9.png 的路径
+        clouds_sunny: sequence('assets/images/sky/clouds/cloud-sunny/cloud-sunny-', 1, 9, 'png'),
+        clouds_overcast: sequence('assets/images/sky/clouds/cloud-overcast/cloud-overcast-', 1, 11, 'png'),
+        clouds_sunset: sequence('assets/images/sky/clouds/cloud-sunset/cloud-sunset-', 1, 10, 'png'),
+        // 月相图集
+        moon: {
+            waxing_crescent: 'assets/images/sky/moon-phases/waxing-crescent.png',
+            first_quarter: 'assets/images/sky/moon-phases/first-quarter.png',
+            full_moon: 'assets/images/sky/moon-phases/full-moon.png',
+            last_quarter: 'assets/images/sky/moon-phases/last-quarter.png',
+            waning_crescent: 'assets/images/sky/moon-phases/waning-crescent.png'
+        }
+    },
+    animals: {
+        cat_down: 'assets/images/animals/cat-down.png',
+        cat_left: 'assets/images/animals/cat-left.png',
+        cat_right: 'assets/images/animals/cat-right.png'
+    },
+    audio: {
+        piano: 'assets/audio/background-piano.mp3'
+    }
+};
+
+/**
+ * ==========================================
+ * 核心系统类定义
+ * ==========================================
+ */
+
+// 1. 增强版资源加载器
+class AssetLoader {
+    constructor() {
+        this.assets = { images: {}, audio: {} };
+        this.loadedCount = 0;
+        this.totalCount = 0;
+    }
+
+    // 加载单张图片
+    loadImage(key, src) {
+        this.totalCount++;
+        const img = new Image();
+        img.src = src;
+        img.onload = () => {
+            this.loadedCount++;
+            // console.log(`[Asset] Loaded: ${key}`);
+        };
+        this.assets.images[key] = img;
+    }
+
+    // 加载音频
+    loadAudio(key, src) {
+        this.totalCount++;
+        const audio = new Audio(src);
+        audio.loop = true; // 默认循环
+        audio.oncanplaythrough = () => {
+            this.loadedCount++;
+            // console.log(`[Asset] Loaded Audio: ${key}`);
+        };
+        this.assets.audio[key] = audio;
+    }
+
+        // 自动加载 MANIFEST 中的所有资源
+    loadManifest(manifest) {
+        // Core
+        for (let k in manifest.core) this.loadImage(`core.${k}`, manifest.core[k]);
+        // Nature
+        for (let k in manifest.nature) this.loadImage(`nature.${k}`, manifest.nature[k]);
+        // Animals
+        for (let k in manifest.animals) this.loadImage(`animals.${k}`, manifest.animals[k]);
+        // Audio
+        for (let k in manifest.audio) this.loadAudio(`audio.${k}`, manifest.audio[k]);
+
+        // Sun
+        for (let k in manifest.sky.sun) this.loadImage(`sky.sun.${k}`, manifest.sky.sun[k]);
+
+        // Moon Phases
+        for (let k in manifest.sky.moon) this.loadImage(`sky.moon.${k}`, manifest.sky.moon[k]);
+
+        // Sky (Clouds Arrays)
+        for (let k in manifest.sky) {
+            if (k === 'moon') continue; // 跳过已经加载的月亮
+
+            const item = manifest.sky[k];
+            if (Array.isArray(item)) {
+                item.forEach((src, index) => {
+                    this.loadImage(`sky.${k}.${index}`, src);
+                });
+                this.assets.images[`sky.${k}.count`] = item.length;
+            } else {
+                // 已经处理了 moon，所以这里基本不会进来，除非有单个天空素材
+            }
+        }
+    }
+
+    getImage(key) {
+        return this.assets.images[key];
+    }
+    
+    getRandomCloudImage(type) {
+        const count = this.assets.images[`sky.${type}.count`] || 0;
+        if (count === 0) return null;
+        const index = Math.floor(Math.random() * count);
+        return this.assets.images[`sky.${type}.${index}`];
+    }
+
+    isLoaded(key) {
+        const img = this.assets.images[key];
+        return img && img.complete && img.naturalWidth !== 0;
+    }
+}
+
+// 2. 粒子系统
+class ParticleSystem {
+    constructor(canvasWidth, canvasHeight, loader) {
+        this.particles = [];
+        this.w = canvasWidth;
+        this.h = canvasHeight;
+        this.loader = loader;
+        this.weather = 'clear';
+        this.season = 'spring';
+    }
+
+    resize(w, h) { this.w = w; this.h = h; }
+    setWeather(t) { this.weather = t; }
+    setSeason(s) { this.season = s; }
+
+    update() {
+        if (this.weather === 'rain' || this.weather === 'snow') {
+            if (Math.random() < 0.4) {
+                this.particles.push({
+                    x: Math.random() * this.w,
+                    y: -5,
+                    speed: this.weather === 'rain' ? 5 + Math.random() : 1 + Math.random(),
+                    type: this.weather,
+                    sway: Math.random() * 100
+                });
+            }
+        }
+        if (this.season === 'autumn' && this.loader.isLoaded('nature.leaf_fall')) {
+            if (Math.random() < 0.02) {
+                this.particles.push({
+                    x: Math.random() * this.w,
+                    y: -20,
+                    speed: 1 + Math.random(),
+                    type: 'leaf',
+                    rotation: Math.random() * 360,
+                    rotationSpeed: (Math.random() - 0.5) * 2,
+                    swayPhase: Math.random() * Math.PI * 2
+                });
+            }
+        }
+        for (let i = 0; i < this.particles.length; i++) {
+            let p = this.particles[i];
+            p.y += p.speed;
+            if (p.type === 'snow') p.x += Math.sin(p.y * 0.05 + p.sway) * 0.5;
+            else if (p.type === 'leaf') {
+                p.x += Math.sin(p.y * 0.02 + p.swayPhase) * 1.5;
+                p.rotation += p.rotationSpeed;
+            }
+            if (p.y > this.h + 20) { this.particles.splice(i, 1); i--; }
+        }
+    }
+
+    draw(ctx) {
+        for (let p of this.particles) {
+            if (p.type === 'leaf') {
+                const img = this.loader.getImage('nature.leaf_fall');
+                if (img) {
+                    ctx.save();
+                    ctx.translate(p.x, p.y);
+                    ctx.rotate(p.rotation * Math.PI / 180);
+                    ctx.drawImage(img, -16, -16, 32, 32); 
+                    ctx.restore();
+                }
+            } else {
+                ctx.fillStyle = p.type === 'rain' ? '#74b9ff' : '#ffffff';
+                let size = p.type === 'rain' ? 2 : (Math.random() > 0.5 ? 2 : 3); // 雪花大小随机
+                let length = p.type === 'rain' ? 8 : size; // 雪花是方形的
+                
+                if (p.type === 'snow') ctx.globalAlpha = 0.8; // 雪花稍微透明
+                ctx.fillRect(Math.floor(p.x), Math.floor(p.y), size, length);
+                ctx.globalAlpha = 1.0;
+            }
+        }
+    }
+}
+
+// 3. 天空系统
+class Cloud {
+    constructor(loader, type, w, h) {
+        this.loader = loader;
+        this.isActive = true;
+        this.init(type, w, h, true); // true = random start x
+    }
+
+    init(type, w, h, randomX = false) {
+        this.img = this.loader.getRandomCloudImage(type);
+        this.type = type; // 记录当前云的类型
+        
+        if (randomX) {
+            this.x = Math.random() * w;
+        } else {
+            this.x = -300; // 从屏幕左侧外开始
+        }
+        
+        this.y = Math.random() * (h * 0.6); 
+        // 速度减慢：0.05 ~ 0.15 (原 0.2~0.5)
+        this.speed = 0.05 + Math.random() * 0.1; 
+        this.scale = 0.5 + Math.random() * 0.5; 
+    }
+
+    update(w, h, currentTargetType) {
+        this.x += this.speed;
+
+        // 边界检查：如果完全跑出了屏幕右侧
+        if (this.x > w) {
+            // 如果当前目标是不显示云(none)，那就标记为不活跃
+            if (currentTargetType === 'none') {
+                this.isActive = false; 
+            } else {
+                // 否则，重置到左侧，并“变身”为当前应该有的云类型
+                this.init(currentTargetType, w, h, false);
+                this.isActive = true;
+            }
+        }
+    }
+
+    draw(ctx) {
+        if (!this.isActive || !this.img) return;
+        
+        ctx.save();
+        ctx.globalAlpha = 0.9;
+        const w = this.img.naturalWidth || 256;
+        const h = this.img.naturalHeight || 128;
+        let dw = w * 0.25 * this.scale;
+        let dh = h * 0.25 * this.scale;
+        ctx.drawImage(this.img, this.x, this.y, dw, dh);
+        ctx.restore();
+    }
+}
+
+class SkySystem {
+    constructor(loader) {
+        this.loader = loader;
+        this.clouds = []; 
+        this.targetCloudType = 'clouds_sunny'; 
+        this.cloudCount = 5; 
+        this.moonPhase = 0; 
+        this.stars = [];
+        this.currentWeather = 'clear'; // 新增：记录当前天气
+    }
+    
+    // 初始化星星
+    initStars(w, h) {
+        if (this.stars.length > 0) return;
+        for (let i = 0; i < 100; i++) {
+            this.stars.push({
+                x: Math.random() * w,
+                y: Math.random() * h,
+                size: Math.random() < 0.9 ? 1 : 2,
+                opacity: Math.random(),
+                twinkleSpeed: 0.02 + Math.random() * 0.05
+            });
+        }
+    }
+    
+    calculateMoonPhase(date) {
+        let year = date.getFullYear();
+        let month = date.getMonth() + 1;
+        let day = date.getDate();
+        if (month < 3) { year--; month += 12; }
+        let c = 365.25 * year;
+        let e = 30.6 * month;
+        let jd = c + e + day - 694039.09; 
+        jd /= 29.5305882; 
+        let b = parseInt(jd); 
+        jd -= b; 
+        b = Math.round(jd * 8); 
+        if (b >= 8) b = 0; 
+        return b; 
+    }
+
+    getMoonImage(phaseIndex) {
+        switch(phaseIndex) {
+            case 0: return null; 
+            case 1: return this.loader.getImage('sky.moon.waxing_crescent');
+            case 2: return this.loader.getImage('sky.moon.first_quarter');
+            case 3: return this.loader.getImage('sky.moon.full_moon');
+            case 4: return this.loader.getImage('sky.moon.full_moon');
+            case 5: return this.loader.getImage('sky.moon.full_moon');
+            case 6: return this.loader.getImage('sky.moon.last_quarter');
+            case 7: return this.loader.getImage('sky.moon.waning_crescent');
+            default: return this.loader.getImage('sky.moon.full_moon');
+        }
+    }
+
+    updateCondition(weather, hour) {
+        this.moonPhase = this.calculateMoonPhase(new Date());
+        this.currentWeather = weather;
+        
+        let newType = 'clouds_sunny';
+        const isNight = hour < 6 || hour >= 19;
+        
+        if (isNight) {
+            if (weather === 'rain' || weather === 'snow' || weather === 'storm') {
+                newType = 'clouds_overcast';
+            } else {
+                newType = 'none';
+            }
+        } else {
+            if (weather === 'rain' || weather === 'snow' || weather === 'cloudy') {
+                newType = 'clouds_overcast';
+            } else if (hour >= 17 && hour <= 19) {
+                newType = 'clouds_sunset'; // 17:00 - 19:00 黄昏云
+            } else {
+                newType = 'clouds_sunny';
+            }
+        }
+
+        // 只更新“目标类型”，不强制重置现有云
+        this.targetCloudType = newType;
+    }
+    
+    // 颜色插值辅助函数
+    lerpColor(a, b, amount) {
+        const ah = parseInt(a.replace(/#/g, ''), 16),
+              ar = ah >> 16, ag = ah >> 8 & 0xff, ab = ah & 0xff,
+              bh = parseInt(b.replace(/#/g, ''), 16),
+              br = bh >> 16, bg = bh >> 8 & 0xff, bb = bh & 0xff,
+              rr = ar + amount * (br - ar),
+              rg = ag + amount * (bg - ag),
+              rb = ab + amount * (bb - ab);
+        return '#' + ((1 << 24) + (Math.round(rr) << 16) + (Math.round(rg) << 8) + Math.round(rb)).toString(16).slice(1);
+    }
+
+    getSkyColor(hour, minute) {
+        const time = hour + minute / 60;
+        
+        // 颜色定义
+        const colors = {
+            night: '#0c1445',
+            night_storm: '#1a1a1a', // 雨雪夜：接近纯黑
+            sunrise: '#ff9f43', 
+            day_clear: '#87CEEB', 
+            day_gray: '#4a5459',  // 雨雪昼：深灰色
+            sunset: '#ff9f43'
+        };
+
+        // 确定白天基调
+        let dayColor = colors.day_clear;
+        if (this.currentWeather === 'rain' || this.currentWeather === 'snow' || this.targetCloudType === 'clouds_overcast') {
+            dayColor = colors.day_gray;
+        }
+
+        // 确定夜晚基调
+        let nightColor = colors.night;
+        if (this.currentWeather === 'rain' || this.currentWeather === 'snow') {
+            nightColor = colors.night_storm;
+        }
+
+        // 插值逻辑
+        if (time >= 5 && time < 6) {
+            return this.lerpColor(nightColor, colors.sunrise, time - 5);
+        } else if (time >= 6 && time < 7) {
+            return this.lerpColor(colors.sunrise, dayColor, time - 6);
+        } 
+        else if (time >= 7 && time < 16) {
+            return dayColor;
+        }
+        else if (time >= 16 && time < 17.5) {
+            return this.lerpColor(dayColor, colors.sunset, (time - 16) / 1.5);
+        } else if (time >= 17.5 && time < 19) {
+            return this.lerpColor(colors.sunset, nightColor, (time - 17.5) / 1.5);
+        }
+        else {
+            return nightColor;
+        }
+    }
+
+    initClouds(w, h) {
+        // 如果还没初始化过，先填满池子
+        if (this.clouds.length === 0) {
+            // 初始生成时，如果 targetType 是 none，就不生成
+            // 如果不是 none，就生成
+            if (this.targetCloudType !== 'none') {
+                for(let i=0; i<this.cloudCount; i++) {
+                    this.clouds.push(new Cloud(this.loader, this.targetCloudType, w, h));
+                }
+            }
+        } else {
+            // 如果池子已经有了，但在 none 状态下可能都 inactive 了
+            // 如果现在变成了非 none，我们需要激活它们（或者把它们重置到屏幕左边）
+            // 这里简单的做法是：每帧 update 会处理重置。
+            // 如果 clouds 数组里的云都跑出去了且 inactive 了，我们需要重新把它们拉回来
+            const activeCount = this.clouds.filter(c => c.isActive).length;
+            if (activeCount < this.cloudCount && this.targetCloudType !== 'none') {
+                // 找到一个死掉的云，复活它
+                const deadCloud = this.clouds.find(c => !c.isActive);
+                if (deadCloud) {
+                    deadCloud.init(this.targetCloudType, w, h, false); // 从左边复活
+                } else if (this.clouds.length < this.cloudCount) {
+                    // 如果池子没满，加新的
+                    this.clouds.push(new Cloud(this.loader, this.targetCloudType, w, h));
+                }
+            }
+        }
+    }
+
+    draw(ctx, w, h, hour, minute) {
+        this.initClouds(w, h);
+        this.initStars(w, h);
+
+        ctx.fillStyle = this.getSkyColor(hour, minute);
+        ctx.fillRect(0, 0, w, h);
+
+        // 绘制星星 (仅限晴朗的晚上: 也就是没有云的时候)
+        if ((hour < 6 || hour >= 18) && this.targetCloudType === 'none') {
+            ctx.fillStyle = '#ffffff';
+            this.stars.forEach(star => {
+                star.opacity += star.twinkleSpeed;
+                if (star.opacity > 1 || star.opacity < 0.2) star.twinkleSpeed = -star.twinkleSpeed;
+                ctx.globalAlpha = Math.max(0, Math.min(1, star.opacity));
+                ctx.fillRect(star.x, star.y, star.size, star.size);
+            });
+            ctx.globalAlpha = 1.0;
+        }
+
+        // 计算日月轨迹
+        const timeFloat = hour + minute / 60;
+        
+        let moonTime = timeFloat;
+        if (moonTime < 12) moonTime += 24; 
+        let moonProgress = (moonTime - 18) / 12; 
+        let moonX = w * ((moonProgress - 0.2) * 1.4); 
+        let moonY = h * 0.7 - Math.sin(moonProgress * Math.PI) * (h * 0.5);
+
+        let celestialX = w * ((timeFloat - 6) / 12);
+        let celestialY = h * 0.3;
+        
+        // 增加条件：非雨非雪才绘制日月
+        const isPrecipitating = this.currentWeather === 'rain' || this.currentWeather === 'snow';
+
+        if (!isPrecipitating) {
+            // 太阳绘制 (06:00 - 19:00)
+            if (hour >= 6 && hour <= 19) {
+                // 判断时段
+                let sunKey = 'sky.sun.noon';
+                if (hour < 10) sunKey = 'sky.sun.sunrise';       // 6-10点: 日出
+                else if (hour >= 16) sunKey = 'sky.sun.sunset';  // 16-19点: 日落
+                
+                const sunImg = this.loader.getImage(sunKey);
+                if (sunImg) {
+                    const size = 32; // 太阳尺寸
+                    ctx.save();
+                    // 简单的发光效果
+                    ctx.shadowColor = '#feca57';
+                    ctx.shadowBlur = 10;
+                    ctx.drawImage(sunImg, celestialX - size/2, celestialY - size/2, size, size);
+                    ctx.restore();
+                } else {
+                    // 备用绘制 (如果图片没加载出来)
+                    ctx.fillStyle = '#feca57';
+                    ctx.globalAlpha = 0.2;
+                    ctx.beginPath(); ctx.arc(celestialX + 3, celestialY + 3, 10, 0, Math.PI*2); ctx.fill();
+                    ctx.globalAlpha = 1.0;
+                    ctx.fillRect(celestialX, celestialY, 6, 6);
+                }
+            } else {
+                // 月亮
+                if (this.moonPhase === undefined) this.moonPhase = this.calculateMoonPhase(new Date());
+                const moonImg = this.getMoonImage(this.moonPhase);
+
+                if (moonImg) {
+                    ctx.save();
+                    let size = 16; 
+                    ctx.drawImage(moonImg, moonX - size/2, moonY - size/2, size, size);
+                    ctx.restore();
+                } else {
+                    if (this.moonPhase !== 0) { 
+                        ctx.fillStyle = '#dff9fb';
+                        ctx.fillRect(moonX, moonY, 4, 4); 
+                    }
+                }
+            }
+        }
+        
+        // 绘制云朵
+        this.clouds.forEach(c => {
+            c.update(w, h, this.targetCloudType); // 传入当前期望的类型
+            c.draw(ctx);
+        });
+    }
+}
+
+// 4. 访客系统 (猫/青蛙)
+class VisitorSystem {
+    constructor(loader) {
+        this.loader = loader;
+        this.state = 'HIDDEN'; // HIDDEN, ENTERING, IDLE, EXITING
+        this.progress = 0; // 0 -> 1 (进出动画进度)
+        this.timer = 0;
+        this.currentAnimal = 'cat_down'; // 目前只做猫，未来可以随机
+    }
+
+    update() {
+        if (this.state === 'HIDDEN') {
+            // 随机触发
+            if (Math.random() < 0.002) { 
+                this.state = 'ENTERING';
+                this.progress = 0;
+                const keys = ['cat_down', 'cat_left', 'cat_right'];
+                this.currentAnimal = 'animals.' + keys[Math.floor(Math.random() * keys.length)];
+            }
+        } else if (this.state === 'ENTERING') {
+            this.progress += 0.01; // 减慢进入速度
+            if (this.progress >= 1) {
+                this.progress = 1;
+                this.state = 'IDLE';
+                // 逗留时间：最少 60秒 (3600帧)，最多 120秒 (7200帧)
+                this.timer = 3600 + Math.random() * 3600; 
+            }
+        } else if (this.state === 'IDLE') {
+            this.timer--;
+            if (this.timer <= 0) {
+                this.state = 'EXITING';
+            }
+        } else if (this.state === 'EXITING') {
+            this.progress -= 0.01; // 减慢退出速度
+            if (this.progress <= 0) {
+                this.progress = 0;
+                this.state = 'HIDDEN';
+            }
+        }
+    }
+
+    draw(ctx, renderRect) {
+        if (this.state === 'HIDDEN') return;
+
+        const img = this.loader.getImage(this.currentAnimal);
+        if (!img) return;
+
+        const { x, y, w, h } = renderRect;
+        
+        // 位移逻辑：
+        // 假设 'offset' 是猫头探出的距离。
+        // 我们需要让猫从 "缩进去的位置" 移动到 "原始位置(x,y)"
+        // 缩进去的位置 = 原始位置 + 反方向偏移
+        
+        // 偏移量设定：大概是井口宽度的 15% (足够把猫头藏进井壁)
+        // 这个值取决于你的画猫时猫头伸出了多少像素
+        const maxDist = w * 0.15; 
+        
+        // currentDist: 当前偏离原位的距离
+        // progress 0 (刚开始) -> 偏离 maxDist (藏起来)
+        // progress 1 (结束)   -> 偏离 0 (原位展示)
+        const currentDist = maxDist * (1 - this.progress);
+
+        let drawX = x;
+        let drawY = y;
+
+        if (this.currentAnimal.includes('down')) {
+            // 规则：从下往上显示 (Enter: Bottom -> Top)
+            // 隐蔽位置：y + currentDist (更靠下)
+            // 显形位置：y
+            drawY = y + currentDist;
+        } else if (this.currentAnimal.includes('left')) {
+            // 规则：从左往右显示 (Enter: Left -> Right)
+            // 隐蔽位置：x - currentDist (更靠左)
+            // 显形位置：x
+            drawX = x - currentDist;
+        } else if (this.currentAnimal.includes('right')) {
+            // 规则：从右往左显示 (Enter: Right -> Left)
+            // 隐蔽位置：x + currentDist (更靠右)
+            // 显形位置：x
+            drawX = x + currentDist;
+        }
+
+        ctx.save();
+        // 去掉透明度渐变，完全实心，只靠位移
+        // 确保裁剪区域：虽然 Well 会盖住，但为了保险或者调试，保持默认绘制即可
+        ctx.drawImage(img, drawX, drawY, w, h);
+        ctx.restore();
+    }
+}
+
+// 5. 植被系统
+class Vegetation {
+    constructor(loader) {
+        this.loader = loader;
+        this.flowerOpacity = 0;
+        this.windTime = 0;
+        this.season = 'spring';
+    }
+
+    setSeason(s) { this.season = s; }
+
+    update() {
+        if (this.flowerOpacity < 1) {
+            this.flowerOpacity += 0.01;
+            if (this.flowerOpacity > 1) this.flowerOpacity = 1;
+        }
+        this.windTime += 0.02;
+    }
+
+    draw(ctx, renderRect) {
+        const { x, y, w, h } = renderRect;
+        
+        // 1. Base (core.branch)
+        if (this.loader.isLoaded('core.branch')) {
+            ctx.drawImage(this.loader.getImage('core.branch'), x, y, w, h);
+        }
+
+        // 2. Foliage (nature.[season])
+        const foliageKey = `nature.${this.season}`;
+        if (this.loader.isLoaded(foliageKey)) {
+            ctx.save();
+            ctx.globalAlpha = this.flowerOpacity;
+
+            if (this.season === 'spring') {
+                const sway = Math.sin(this.windTime) * 0.008;
+                const breatheY = Math.sin(this.windTime * 1.3) * 1;
+                const cx = x + w / 2;
+                const cy = y + h / 2;
+                ctx.translate(cx, cy);
+                ctx.rotate(sway);
+                ctx.translate(0, breatheY);
+                ctx.translate(-cx, -cy);
+            }
+
+            ctx.drawImage(this.loader.getImage(foliageKey), x, y, w, h);
+            ctx.restore();
+        }
+    }
+}
+
+// 6. 总导演
+class Director {
+    constructor() {
+        this.canvas = document.getElementById('pixelCanvas');
+        this.ctx = this.canvas.getContext('2d');
+        this.pixelScale = 4;
+
+        // 初始化 Loader 并加载 MANIFEST
+        this.loader = new AssetLoader();
+        this.loader.loadManifest(MANIFEST);
+
+        this.sky = new SkySystem(this.loader);
+        this.particles = new ParticleSystem(this.canvas.width, this.canvas.height, this.loader);
+        this.vegetation = new Vegetation(this.loader);
+        this.visitors = new VisitorSystem(this.loader); // 新增访客系统
+
+        // 调试变量
+        this.debugHour = null; // 如果设置了数值 (0-23)，则强制使用该时间
+        this.debugWeather = null; // 如果设置了字符串，强制使用该天气
+
+        // 计算季节
+        this.determineSeason();
+
+        // 启动
+        this.resize();
+        window.addEventListener('resize', () => this.resize());
+        this.startClock();
+        this.fetchWeather();
+        setInterval(() => this.fetchWeather(), 1000 * 60 * 30);
+        
+        // 音频初始化 (等待用户交互)
+        this.initAudio();
+
+        // 测试接口
+        window.testCat = (type = 'cat_down') => {
+             this.visitors.state = 'ENTERING';
+             this.visitors.progress = 0;
+             this.visitors.currentAnimal = 'animals.' + type;
+             console.log('Summoning:', type);
+        };
+
+        // 时间测试接口
+        window.testTime = (h) => {
+            this.debugHour = h;
+            console.log(`[System] Time override: ${h}:00`);
+        };
+
+        // 天气测试接口
+        window.testWeather = (w) => {
+            this.debugWeather = w;
+            console.log(`[System] Weather override: ${w}`);
+        };
+
+        console.log('[System] Use testTime(hour) and testWeather("rain"|"snow"|"clear") to debug.');
+
+        this.loop = this.loop.bind(this);
+        requestAnimationFrame(this.loop);
+    }
+
+    initAudio() {
+        const bgm = this.loader.assets.audio['audio.piano'];
+        const icon = document.getElementById('volume-icon');
+        const slider = document.getElementById('volume-slider');
+        
+        if (!bgm) return;
+
+        bgm.loop = true;
+        bgm.volume = 0.5;
+
+        // 更新图标状态 (仅在真正静音或手动暂停时才显示静音)
+        const updateIcon = () => {
+            if (bgm.muted || bgm.volume === 0) icon.innerText = '🔇';
+            else if (bgm.paused) icon.innerText = '🔇'; // 暂停也显示静音
+            else icon.innerText = '🔊';
+        };
+
+        // 尝试自动播放
+        const tryPlay = () => {
+            console.log('[Audio] Trying to play...');
+            const playPromise = bgm.play();
+
+            if (playPromise !== undefined) {
+                playPromise.then(() => {
+                    console.log('[Audio] Auto-playing success');
+                    updateIcon();
+                }).catch((error) => {
+                    console.log('[Audio] Autoplay blocked:', error);
+                    // 显示弹窗
+                    const modal = document.getElementById('audio-modal');
+                    if (modal) {
+                        modal.style.display = 'flex';
+                        console.log('[Audio] Modal shown');
+                    } else {
+                        console.error('[Audio] Modal element not found!');
+                    }
+
+                    const btnYes = document.getElementById('btn-yes');
+                    const btnNo = document.getElementById('btn-no');
+
+                    if (btnYes) btnYes.onclick = () => {
+                        bgm.play();
+                        updateIcon();
+                        modal.style.display = 'none';
+                    };
+                    
+                    if (btnNo) btnNo.onclick = () => {
+                        modal.style.display = 'none';
+                    };
+                });
+            }
+        };
+
+        // 延迟 1 秒执行，给浏览器一点喘息时间，也能让用户注意到弹窗
+        setTimeout(tryPlay, 1000);
+
+        // 2. 绑定图标点击 (播放/暂停)
+        icon.addEventListener('click', () => {
+            if (bgm.paused) {
+                bgm.play();
+                if (bgm.volume === 0) bgm.volume = 0.5;
+                slider.value = bgm.volume;
+    } else {
+                bgm.pause();
+            }
+            // 这里必须真实更新，不能再欺骗了
+            if (bgm.paused) icon.innerText = '🔇';
+            else icon.innerText = '🔊';
+        });
+
+        // 3. 绑定滑块
+        slider.addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            bgm.volume = val;
+            if (val > 0 && bgm.paused) bgm.play(); // 拖动滑块自动播放
+            updateIcon();
+        });
+
+        // 4. 兜底交互监听 (一旦用户点击任意处，如果没在播，就播放)
+        // 这个逻辑可能会和图标点击冲突，所以要判断点击目标
+        const globalUnlock = (e) => {
+            // 如果点击的是控制条本身，不处理
+            if (e.target.closest('#audio-control')) return;
+            
+            if (bgm.paused) {
+                bgm.play().then(() => {
+                    slider.value = bgm.volume;
+                    updateIcon();
+                });
+            }
+            // 只要触发了一次就移除，避免每次点击都重置音量
+            document.removeEventListener('click', globalUnlock);
+        };
+        document.addEventListener('click', globalUnlock);
+    }
+
+    determineSeason() {
+        const month = new Date().getMonth() + 1;
+        // DEBUG: const month = 10;
+        
+        if (month >= 3 && month <= 5) this.season = 'spring';
+        else if (month >= 6 && month <= 8) this.season = 'summer';
+        else if (month >= 9 && month <= 11) this.season = 'autumn';
+        else this.season = 'winter';
+
+        console.log(`[Director] Season: ${this.season}`);
+        this.particles.setSeason(this.season);
+        this.vegetation.setSeason(this.season);
+    }
+
+    resize() {
+        this.canvas.width = Math.ceil(window.innerWidth / this.pixelScale);
+        this.canvas.height = Math.ceil(window.innerHeight / this.pixelScale);
+        this.particles.resize(this.canvas.width, this.canvas.height);
+    }
+
+    getRenderRect() {
+        const w = this.canvas.width;
+        const h = this.canvas.height;
+        const imgRatio = 1; 
+        const canvasRatio = w / h;
+        let rw, rh, ox, oy;
+        if (canvasRatio > imgRatio) {
+            rw = w; rh = w / imgRatio;
+            ox = 0; oy = (h - rh) / 2;
+        } else {
+            rw = h * imgRatio; rh = h;
+            ox = (w - rw) / 2; oy = 0;
+        }
+        return { x: ox, y: oy, w: rw, h: rh };
+    }
+
+    startClock() {
+        const update = () => {
+            const now = new Date();
+            document.getElementById('time-text').innerText = now.toLocaleTimeString('en-GB', { hour12: false });
+            document.getElementById('date-text').innerText = now.toLocaleDateString('en-GB', { month: 'short', day: 'numeric', year: 'numeric' }).toUpperCase();
+            document.getElementById('weekday-text').innerText = now.toLocaleDateString('en-GB', { weekday: 'long' }).toUpperCase();
+            
+            // 每秒检查一次云朵状态，确保时间变了云也能跟着变
+            if (this.sky && this.particles) {
+                // 如果有调试时间/天气，就不在这里自动更新，交给 loop 处理
+                if (this.debugHour === null && this.debugWeather === null) {
+                    this.sky.updateCondition(this.particles.weather, now.getHours());
+                }
+            }
+        };
+        setInterval(update, 1000);
+        update();
+    }
+
+    async fetchWeather() {
+        const weatherDescEl = document.getElementById('weather-desc');
+        const tempEl = document.getElementById('temp-text');
+        if (!navigator.geolocation) { weatherDescEl.innerText = "NO GPS"; return; }
+
+        navigator.geolocation.getCurrentPosition(async (pos) => {
+            try {
+                const { latitude, longitude } = pos.coords;
+                const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`);
+                const data = await res.json();
+                const w = data.current_weather;
+                
+                const code = w.weathercode;
+                let type = 'clear';
+                let text = 'CLEAR';
+
+                if (code >= 51 && code <= 67) { type = 'rain'; text = 'RAINING'; }
+                else if (code >= 71 && code <= 77) { type = 'snow'; text = 'SNOWING'; }
+                else if (code >= 95) { type = 'rain'; text = 'STORM'; }
+
+                this.particles.setWeather(type);
+                this.sky.updateCondition(type, new Date().getHours()); // 更新云朵
+                tempEl.innerText = `${Math.round(w.temperature)}°C`;
+                weatherDescEl.innerText = text;
+            } catch(e) { weatherDescEl.innerText = "OFFLINE"; }
+        }, () => { weatherDescEl.innerText = "GPS DENIED"; });
+    }
+
+    loop() {
+        const now = new Date();
+        let currentHour = now.getHours();
+        let currentMinute = now.getMinutes();
+
+        // 调试模式覆盖
+        if (this.debugHour !== null) {
+            currentHour = Math.floor(this.debugHour);
+            currentMinute = (this.debugHour % 1) * 60;
+        }
+
+        // 确定当前天气 (Debug 优先)
+        let currentWeather = this.particles.weather;
+        if (this.debugWeather !== null) {
+            currentWeather = this.debugWeather;
+            // 强制同步粒子系统的天气状态，以便粒子效果能出来
+            if (this.particles.weather !== currentWeather) {
+                this.particles.setWeather(currentWeather);
+            }
+        }
+
+        // 强制更新天空状态 (每一帧都确保状态正确，防止被其他逻辑覆盖)
+        // 只有在 debug 模式或者 weather 发生变化时才需要频繁调用，但为了保险，
+        // 既然 updateCondition 计算量不大，我们在 loop 里调用也没问题，
+        // 关键是要传入正确的时间和天气！
+        this.sky.updateCondition(currentWeather, currentHour);
+
+        const w = this.canvas.width;
+        const h = this.canvas.height;
+        const renderRect = this.getRenderRect();
+
+        // 1. 天空 (底层)
+        this.sky.draw(this.ctx, w, h, currentHour, currentMinute);
+        
+        // 2. 粒子 (中层)
+        this.particles.update();
+        this.particles.draw(this.ctx);
+        
+        // 3. 访客 (猫) - 先画猫，全尺寸绘制
+        this.visitors.update();
+        this.visitors.draw(this.ctx, renderRect);
+
+        // 4. 井口 (Well) - 覆盖在猫之上，利用井壁遮挡猫身
+        if (this.loader.isLoaded('core.well')) {
+            this.ctx.drawImage(this.loader.getImage('core.well'), renderRect.x, renderRect.y, renderRect.w, renderRect.h);
+        } else {
+            // 备用绘制
+            this.ctx.fillStyle = '#111';
+            this.ctx.beginPath();
+            this.ctx.arc(w/2, h/2, Math.min(w,h)/2.5, 0, Math.PI*2);
+            this.ctx.rect(w, 0, -w, h);
+            this.ctx.fill('evenodd');
+        }
+
+        // 5. 植被 (树枝) - 最顶层，遮挡一切
+        this.vegetation.update();
+        this.vegetation.draw(this.ctx, renderRect);
+
+        requestAnimationFrame(this.loop);
+    }
+}
+
+window.onload = () => { window.game = new Director(); };
+</script>
+</body>
+</html>
