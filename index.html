@@ -8,7 +8,16 @@
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; background-color: #111; overflow: hidden; font-family: 'Press Start 2P', cursive; color: white; user-select: none; }
         #game-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
-        canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            /* 强制像素化，防止模糊 */
+            image-rendering: -moz-crisp-edges;
+            image-rendering: -webkit-crisp-edges;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
         #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; align-items: center; padding: 20px 0; box-sizing: border-box; text-shadow: 2px 2px 0px #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000; }
         .top-bar { text-align: center; line-height: 1.8; }
         #date-text { font-size: 12px; color: #ffd700; }
@@ -625,25 +634,35 @@ class VisitorSystem {
         this.state = 'HIDDEN'; // HIDDEN, ENTERING, IDLE, EXITING
         this.progress = 0; // 0 -> 1 (进出动画进度)
         this.timer = 0;
-        this.currentAnimal = 'cat_down'; // 目前只做猫，未来可以随机
+        this.cooldown = 0; // 新增冷却时间
+        this.currentAnimal = 'cat_down'; 
     }
 
     update() {
+        // 如果还在冷却，就倒计时
+        if (this.cooldown > 0) {
+            this.cooldown--;
+            return;
+        }
+
         if (this.state === 'HIDDEN') {
-            // 随机触发
-            if (Math.random() < 0.002) { 
+            // 概率调整：每帧 0.0005 (约 30秒-1分钟 检查一次成功)
+            // 但由于有冷却时间，这决定了"冷却结束后多久会来"
+            // 我们希望冷却结束后，不用等太久就能来，所以这里的概率可以稍微高一点点，
+            // 主要是靠 cooldown 来控制大间隔。
+            if (Math.random() < 0.001) { 
                 this.state = 'ENTERING';
                 this.progress = 0;
                 const keys = ['cat_down', 'cat_left', 'cat_right'];
                 this.currentAnimal = 'animals.' + keys[Math.floor(Math.random() * keys.length)];
             }
         } else if (this.state === 'ENTERING') {
-            this.progress += 0.01; // 减慢进入速度
+            this.progress += 0.01; 
             if (this.progress >= 1) {
                 this.progress = 1;
                 this.state = 'IDLE';
-                // 逗留时间：最少 60秒 (3600帧)，最多 120秒 (7200帧)
-                this.timer = 3600 + Math.random() * 3600; 
+                // 逗留时间：1-3 分钟 (3600 - 10800 帧)
+                this.timer = 3600 + Math.random() * 7200; 
             }
         } else if (this.state === 'IDLE') {
             this.timer--;
@@ -651,10 +670,15 @@ class VisitorSystem {
                 this.state = 'EXITING';
             }
         } else if (this.state === 'EXITING') {
-            this.progress -= 0.01; // 减慢退出速度
+            this.progress -= 0.01; 
             if (this.progress <= 0) {
                 this.progress = 0;
                 this.state = 'HIDDEN';
+                // 离开后进入超长冷却：1 - 4 小时 (60fps * 60s * 60m * hours)
+                // 1 hour = 216,000 frames
+                // 随机 1~4 小时再来
+                this.cooldown = 216000 * (1 + Math.random() * 3);
+                console.log(`[Visitor] Left. Next visit in ~${Math.round(this.cooldown / 3600)} minutes.`);
             }
         }
     }
@@ -929,6 +953,10 @@ class Director {
     }
 
     resize() {
+        // 动态调整像素比例：手机端用 2 倍，电脑端用 4 倍
+        // 这样手机上看起来更细腻，不会是大果粒
+        this.pixelScale = window.innerWidth < 800 ? 2 : 4;
+        
         this.canvas.width = Math.ceil(window.innerWidth / this.pixelScale);
         this.canvas.height = Math.ceil(window.innerHeight / this.pixelScale);
         this.particles.resize(this.canvas.width, this.canvas.height);
