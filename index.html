@@ -578,10 +578,13 @@ class SkySystem {
         // 计算日月轨迹
         const timeFloat = hour + minute / 60;
         
+        // 月亮轨迹：从 18:00 开始，到次日 6:00 结束，共 12 小时
         let moonTime = timeFloat;
-        if (moonTime < 12) moonTime += 24; 
-        let moonProgress = (moonTime - 18) / 12; 
-        let moonX = w * ((moonProgress - 0.2) * 1.4); 
+        if (moonTime < 6) moonTime += 24; // 凌晨时间加24小时
+        let moonProgress = (moonTime - 18) / 12; // 0 到 1 之间
+        moonProgress = Math.max(0, Math.min(1, moonProgress)); // 限制在 0-1 范围内
+        // 月亮从左到右移动，从屏幕左侧 10% 到右侧 90%
+        let moonX = w * (0.1 + moonProgress * 0.8); 
         let moonY = h * 0.7 - Math.sin(moonProgress * Math.PI) * (h * 0.5);
 
         let celestialX = w * ((timeFloat - 6) / 12);
@@ -619,6 +622,11 @@ class SkySystem {
                 // 月亮
                 if (this.moonPhase === undefined) this.moonPhase = this.calculateMoonPhase(new Date());
                 const moonImg = this.getMoonImage(this.moonPhase);
+
+                // 调试信息（仅在控制台显示）
+                if (window.DEBUG_MOON) {
+                    console.log(`[Moon] hour=${hour}, phase=${this.moonPhase}, x=${moonX.toFixed(1)}, y=${moonY.toFixed(1)}, weather=${this.currentWeather}, hasImage=${!!moonImg}`);
+                }
 
                 if (moonImg) {
                     ctx.save();
